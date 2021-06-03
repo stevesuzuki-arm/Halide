@@ -22,10 +22,6 @@ option(CMAKE_CXX_STANDARD_REQUIRED "Disable CMake standard-version-decay behavio
 option(CMAKE_CXX_EXTENSIONS "Compile with non-standard C++ extensions (e.g. gnu++17)" OFF)
 option(BUILD_SHARED_LIBS "Build shared libs by default" YES)
 
-# Export all symbols on Windows to match GCC/Clang behavior on Linux/macOS
-# todo: can this be set _only_ on libHalide?
-set(CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS ON)
-
 # Warn if the user selected a low standard version
 if (CMAKE_CXX_STANDARD LESS 14)
     message(WARNING "Halide requires C++14 and above.")
