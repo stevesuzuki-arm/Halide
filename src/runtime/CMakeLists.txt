@@ -261,15 +261,15 @@ foreach (i IN LISTS RUNTIME_CPP)
                 target_compile_definitions(${basename} PRIVATE ${RUNTIME_DEFINES})
             else()
                 add_custom_command(OUTPUT "${LL}"
-                                   COMMAND clang ${clang_flags} -o "${ll_path}" "$<SHELL_PATH:${SOURCE}>"
-                                   DEPENDS "${SOURCE}"
+                                   COMMAND HalideHost::clang ${clang_flags} -o "${ll_path}" "$<SHELL_PATH:${SOURCE}>"
+                                   DEPENDS HalideHost::clang "${SOURCE}"
                                    ${dep_args}
                                    VERBATIM)
             endif()
 
             add_custom_command(OUTPUT "${BC}"
-                               COMMAND llvm-as "${LL}" -o "${BC}"
-                               DEPENDS "${LL}"
+                               COMMAND HalideHost::llvm-as "${LL}" -o "${BC}"
+                               DEPENDS HalideHost::llvm-as "${LL}"
                                VERBATIM)
 
             # todo: cross compile
@@ -290,8 +290,8 @@ foreach (i IN LISTS RUNTIME_LL)
     set(INITMOD "_initmod_${i}.cpp")
 
     add_custom_command(OUTPUT "${BC}"
-                       COMMAND llvm-as "$<SHELL_PATH:${CMAKE_CURRENT_SOURCE_DIR}/${LL}>" -o "${BC}"
-                       DEPENDS "${LL}"
+                       COMMAND HalideHost::llvm-as "$<SHELL_PATH:${CMAKE_CURRENT_SOURCE_DIR}/${LL}>" -o "${BC}"
+                       DEPENDS HalideHost::llvm-as "${LL}"
                        VERBATIM)
     # todo: cross compile
     add_custom_command(OUTPUT "${INITMOD}"

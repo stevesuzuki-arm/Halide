@@ -339,6 +339,12 @@ set(SOURCE_FILES
 # Build and import the runtime.
 ##
 
+if (CMAKE_CROSSCOMPILING)
+    find_package(HalideHost REQUIRED)
+else ()
+    add_subdirectory(tools)
+endif ()
+
 add_subdirectory(runtime)
 
 ##
