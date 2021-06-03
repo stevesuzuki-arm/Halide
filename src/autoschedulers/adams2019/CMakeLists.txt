@@ -5,6 +5,7 @@
 # weights
 set(WF_CPP baseline.cpp)
 configure_file(baseline.weights baseline.weights COPYONLY)
+# todo: cross compile
 add_custom_command(OUTPUT ${WF_CPP}
                    COMMAND binary2cpp baseline_weights < baseline.weights > ${WF_CPP}
                    DEPENDS baseline.weights binary2cpp
@@ -21,6 +22,7 @@ add_halide_library(train_cost_model FROM cost_model.generator
                    USE_RUNTIME cost_model.runtime)
 
 # retrain_cost_model
+# todo: cross compile
 add_executable(retrain_cost_model
                ASLog.cpp
                DefaultCostModel.cpp
