@@ -31,7 +31,11 @@ export(TARGETS build_halide_h binary2cpp
 #    Also, find_program would require a bunch of hard-coded HINTS to keep things
 #    consistent and would require our users to give paths to those tools manually.
 # 2. We re-create the llvm-as and clang targets in our own namespace and then
-#    import the targets that export _can_ handle (see 3 above) here.
+#    import the targets that export _can_ handle (see 3 above) here. The downside
+#    here is that the target Halide build will necessarily use the same LLVM host
+#    tools as used by the host build. So there's a potential for conflicts where
+#    someone wants to build host Halide with LLVM 12, say, and target Halide with
+#    LLVM 13. Not supporting this seems totally fine.
 #
 # This is option 2.
 file(GENERATE
