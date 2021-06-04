@@ -18,16 +18,8 @@ file(GENERATE
 include(${CMAKE_CURRENT_LIST_DIR}/HalideHost-exports.cmake)
 
 add_executable(HalideHost::llvm-as IMPORTED)
-set_target_properties(
-  HalideHost::llvm-as
-  PROPERTIES
-  IMPORTED_LOCATION "$<TARGET_FILE:llvm-as>"
-)
+set_property(TARGET HalideHost::llvm-as PROPERTY IMPORTED_LOCATION "$<TARGET_FILE:llvm-as>")
 
 add_executable(HalideHost::clang IMPORTED)
-set_target_properties(
-  HalideHost::clang
-  PROPERTIES
-  IMPORTED_LOCATION "$<TARGET_FILE:clang>"
-)
+set_property(TARGET HalideHost::clang PROPERTY IMPORTED_LOCATION "$<TARGET_FILE:clang>")
 ]])
