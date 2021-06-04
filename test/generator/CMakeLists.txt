@@ -77,7 +77,7 @@ add_custom_command(OUTPUT "${EC32}.bc"
                    DEPENDS HalideHost::clang "${EXTERNAL_CPP}"
                    VERBATIM)
 add_custom_command(OUTPUT "${EC32}.cpp"
-                   COMMAND binary2cpp external_code_extern_bitcode_32 < "${EC32}.bc" > "${EC32}.cpp"
+                   COMMAND HalideHost::binary2cpp external_code_extern_bitcode_32 < "${EC32}.bc" > "${EC32}.cpp"
                    DEPENDS HalideHost::binary2cpp "${EC32}.bc"
                    VERBATIM)
 
