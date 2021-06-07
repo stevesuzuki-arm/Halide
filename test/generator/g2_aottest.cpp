@@ -6,6 +6,8 @@
 
 #include "g2.h"
 #include "g2_lambda.h"
+#include "g2_tuple.h"
+#include "g2_pipeline.h"
 
 using namespace Halide::Runtime;
 
@@ -28,29 +30,79 @@ int main(int argc, char **argv) {
         input(x, y) = (x + y);
     });
 
-    Buffer<int32_t> output(kSize, kSize);
 
-    g2(input, offset, output);
-    output.for_each_element([&](int x, int y) {
-        const int32_t scaling = 2;  // GeneratorParam
-        int expected = (x + y) * scaling + offset;
-        int actual = output(x, y);
-        if (expected != actual) {
-            fprintf(stderr, "g2: at %d %d, expected %d, actual %d\n", x, y, expected, actual);
-            exit(-1);
-        }
-    });
+    {
+        Buffer<int32_t> output(kSize, kSize);
+        g2(input, offset, output);
+        const int32_t scaling = 2;  // GeneratorParam, aka "Constant"
+        output.for_each_element([&](int x, int y) {
+            int expected = (x + y) * scaling + offset;
+            int actual = output(x, y);
+            if (expected != actual) {
+                fprintf(stderr, "g2: at %d %d, expected %d, actual %d\n", x, y, expected, actual);
+                exit(-1);
+            }
+        });
+    }
 
-    g2_lambda(input, offset, output);
-    output.for_each_element([&](int x, int y) {
-        const int32_t scaling = 33;  // GeneratorParam
-        int expected = (x + y) * scaling + offset;
-        int actual = output(x, y);
-        if (expected != actual) {
-            fprintf(stderr, "g2_lambda: at %d %d, expected %d, actual %d\n", x, y, expected, actual);
-            exit(-1);
-        }
-    });
+    {
+        Buffer<int32_t> output(kSize, kSize);
+        g2_lambda(input, offset, output);
+        const int32_t scaling = 33;  // GeneratorParam, aka "Constant"
+        output.for_each_element([&](int x, int y) {
+            int expected = (x + y) * scaling + offset;
+            int actual = output(x, y);
+            if (expected != actual) {
+                fprintf(stderr, "g2_lambda: at %d %d, expected %d, actual %d\n", x, y, expected, actual);
+                exit(-1);
+            }
+        });
+    }
+
+    {
+        Buffer<int32_t> output(kSize, kSize);
+        Buffer<double> foutput(kSize, kSize);
+        g2_tuple(input, offset, output, foutput);
+        const int32_t scaling = 2;  // GeneratorParam, aka "Constant"
+        output.for_each_element([&](int x, int y) {
+            int expected = (x + y) * scaling + offset;
+            int actual = output(x, y);
+            if (expected != actual) {
+                fprintf(stderr, "g2_tuple[1]: at %d %d, expected %d, actual %d\n", x, y, expected, actual);
+                exit(-1);
+            }
+            const double fscaling = 0.5 * scaling;
+            double fexpected = (double)(x + y) * fscaling + offset;
+            double factual = foutput(x, y);
+            if (fexpected != factual) {
+                fprintf(stderr, "g2_tuple[2]: at %d %d, expected %f, actual %f\n", x, y, fexpected, factual);
+                exit(-1);
+            }
+        });
+    }
+
+    {
+        Buffer<int32_t> output0(kSize, kSize);
+        Buffer<int32_t> output1(kSize*2, kSize*2);
+        g2_pipeline(input, offset, output0, output1);
+        const int32_t scaling = 2;  // GeneratorParam, aka "Constant"
+        output0.for_each_element([&](int x, int y) {
+            int expected = (x + y) * scaling + offset;
+            int actual = output0(x, y);
+            if (expected != actual) {
+                fprintf(stderr, "g2_pipeline[0]: at %d %d, expected %d, actual %d\n", x, y, expected, actual);
+                exit(-1);
+            }
+        });
+        output1.for_each_element([&](int x, int y) {
+            int expected = (x/2 + y/2) * scaling + offset;
+            int actual = output1(x, y);
+            if (expected != actual) {
+                fprintf(stderr, "g2_pipeline[1]: at %d %d, expected %d, actual %d\n", x, y, expected, actual);
+                exit(-1);
+            }
+        });
+    }
 
     printf("Success!\n");
     return 0;

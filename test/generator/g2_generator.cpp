@@ -17,14 +17,6 @@ Func g2_func_impl(Func input, Expr offset, int scaling) {
     return output;
 }
 
-Func g2_tuple_func_impl(Func input, Expr offset, int scaling) {
-    Func output;
-    output(x, y) = Tuple(input(x, y) * scaling + offset, cast<double>(input(x, y)) / scaling - offset);
-    output.compute_root();
-
-    return output;
-}
-
 const auto g2_lambda_impl = [](Func input, Expr offset, int scaling,
                                Type ignored_type, bool ignored_bool, std::string ignored_string, int8_t ignored_int8) {
     std::cout << "Ignoring type: " << ignored_type << "\n";
@@ -38,28 +30,52 @@ const auto g2_lambda_impl = [](Func input, Expr offset, int scaling,
     return output;
 };
 
+Func g2_tuple_func_impl(Func input, Expr offset, int scaling) {
+    Expr fscaling = Expr(0.5) * scaling;
+
+    Func output;
+    output(x, y) = Tuple(input(x, y) * scaling + offset,
+                         cast<double>(input(x, y)) * fscaling + offset);
+    output.compute_root();
+
+    return output;
+}
+
+Pipeline g2_pipeline_impl(Func input, Expr offset, int scaling) {
+    Expr fscaling = Expr(0.5) * scaling;
+
+    Func output0, output1;
+    output0(x, y) = input(x, y) * scaling + offset;
+    output1(x, y) = input(x/2, y/2) * scaling + offset;
+
+    output0.compute_root();
+    output1.compute_root();
+
+    return Pipeline({output0, output1});
+}
+
 }  // namespace Testing
 }  // namespace Halide
 
 using namespace Halide;
 using namespace Halide::Internal;
 
-#define HALIDE_REGISTER_G2(GEN_FUNC, GEN_REGISTRY_NAME, GEN_BIND_INPUTS, GEN_BIND_OUTPUTS)                                                             \
-    namespace halide_register_generator {                                                                                          \
-    struct halide_global_ns;                                                                                                       \
-    namespace GEN_REGISTRY_NAME##_ns {                                                                                             \
-        std::unique_ptr<Halide::Internal::AbstractGenerator> factory(const Halide::GeneratorContext &context) {                    \
-            using Input = Halide::Internal::FnBinder::Input;\
-            using Output = Halide::Internal::FnBinder::Output;\
-            using Constant = Halide::Internal::FnBinder::Constant;\
-            Halide::Internal::FnBinder d(GEN_FUNC, GEN_BIND_INPUTS, GEN_BIND_OUTPUTS);                                                                                   \
-            return G2GeneratorFactory(#GEN_REGISTRY_NAME, std::move(d))(context);                                                  \
-        }                                                                                                                          \
-    }                                                                                                                              \
-    static auto reg_##GEN_REGISTRY_NAME = Halide::Internal::RegisterGenerator(#GEN_REGISTRY_NAME, GEN_FUNC);                       \
-    }                                                                                                                              \
-    static_assert(std::is_same<::halide_register_generator::halide_global_ns, halide_register_generator::halide_global_ns>::value, \
-                  "HALIDE_REGISTER_G2 must be used at global scope");
+// #define HALIDE_REGISTER_G2(GEN_FUNC, GEN_REGISTRY_NAME, GEN_BIND_INPUTS, GEN_BIND_OUTPUTS)                                                             \
+//     namespace halide_register_generator {                                                                                          \
+//     struct halide_global_ns;                                                                                                       \
+//     namespace GEN_REGISTRY_NAME##_ns {                                                                                             \
+//         std::unique_ptr<Halide::Internal::AbstractGenerator> factory(const Halide::GeneratorContext &context) {                    \
+//             using Input = Halide::Internal::FnBinder::Input;\
+//             using Output = Halide::Internal::FnBinder::Output;\
+//             using Constant = Halide::Internal::FnBinder::Constant;\
+//             Halide::Internal::FnBinder d(GEN_FUNC, GEN_BIND_INPUTS, GEN_BIND_OUTPUTS);                                                                                   \
+//             return G2GeneratorFactory(#GEN_REGISTRY_NAME, std::move(d))(context);                                                  \
+//         }                                                                                                                          \
+//     }                                                                                                                              \
+//     static auto reg_##GEN_REGISTRY_NAME = Halide::Internal::RegisterGenerator(#GEN_REGISTRY_NAME, GEN_FUNC);                       \
+//     }                                                                                                                              \
+//     static_assert(std::is_same<::halide_register_generator::halide_global_ns, halide_register_generator::halide_global_ns>::value, \
+//                   "HALIDE_REGISTER_G2 must be used at global scope");
 
 
 #if 0
@@ -106,21 +122,35 @@ RegisterGenerator register_2(
         return G2GeneratorFactory("g2_lambda", std::move(d))(context);
     });
 
-// RegisterGenerator register_3(
-//     "g2_tuple",
-//     [](const GeneratorContext &context) -> std::unique_ptr<AbstractGenerator> {
-//         FnBinder d{
-//             Halide::Testing::g2_tuple_func_impl,
-//             {
-//                 FnBinder::Input("input", Int(32), 2),
-//                 FnBinder::Input("offset", Int(32)),
-//                 FnBinder::Constant("scaling", 2),
-//                 FnBinder::Constant("ignored_type", Int(32)),
-//                 FnBinder::Constant("ignored_bool", false),
-//                 FnBinder::Constant("ignored_string", "qwerty"),
-//                 FnBinder::Constant("ignored_int8", (int8_t)-27),
-//             },
-//             FnBinder::Output("output", {Int(32), Float(64)}, 2),
-//         };
-//         return G2GeneratorFactory("g2_tuple", std::move(d))(context);
-//     });
+RegisterGenerator register_3(
+    "g2_tuple",
+    [](const GeneratorContext &context) -> std::unique_ptr<AbstractGenerator> {
+        FnBinder d{
+            Halide::Testing::g2_tuple_func_impl,
+            {
+                FnBinder::Input("input", Int(32), 2),
+                FnBinder::Input("offset", Int(32)),
+                FnBinder::Constant("scaling", 2),
+            },
+            FnBinder::Output("output", {Int(32), Float(64)}, 2),
+        };
+        return G2GeneratorFactory("g2_tuple", std::move(d))(context);
+    });
+
+RegisterGenerator register_4(
+    "g2_pipeline",
+    [](const GeneratorContext &context) -> std::unique_ptr<AbstractGenerator> {
+        FnBinder d{
+            Halide::Testing::g2_pipeline_impl,
+            {
+                FnBinder::Input("input", Int(32), 2),
+                FnBinder::Input("offset", Int(32)),
+                FnBinder::Constant("scaling", 2),
+            },
+            {
+                FnBinder::Output("output0", Int(32), 2),
+                FnBinder::Output("output1", Int(32), 2),
+            }
+        };
+        return G2GeneratorFactory("g2_pipeline", std::move(d))(context);
+    });

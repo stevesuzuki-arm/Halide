@@ -71,6 +71,7 @@ struct SingleArg {
         Constant,
         Expression,
         Function,
+        Pipeline,
         Buffer,
     };
 
@@ -213,24 +214,29 @@ struct SingleArgInferrer {
 };
 
 template<>
-inline SingleArg SingleArgInferrer<Type>::operator()() {
+inline SingleArg SingleArgInferrer<Halide::Type>::operator()() {
     const Type t = type_of<halide_fake_type_type_t *>();
     return SingleArg{"", SingleArg::Kind::Constant, {t}, 0};
 }
 
 template<>
 inline SingleArg SingleArgInferrer<std::string>::operator()() {
-    const Type t = type_of<halide_fake_string_type_t*>();
+    const Type t = type_of<halide_fake_string_type_t *>();
     return SingleArg{"", SingleArg::Kind::Constant, {t}, 0};
 }
 
 template<>
-inline SingleArg SingleArgInferrer<Func>::operator()() {
+inline SingleArg SingleArgInferrer<Halide::Func>::operator()() {
     return SingleArg{"", SingleArg::Kind::Function, {}, -1};
 }
 
 template<>
-inline SingleArg SingleArgInferrer<Expr>::operator()() {
+inline SingleArg SingleArgInferrer<Halide::Pipeline>::operator()() {
+    return SingleArg{"", SingleArg::Kind::Pipeline, {}, -1};
+}
+
+template<>
+inline SingleArg SingleArgInferrer<Halide::Expr>::operator()() {
     return SingleArg{"", SingleArg::Kind::Expression, {}, 0};
 }
 
@@ -370,8 +376,6 @@ private:
 
 // ---------------------------------------
 
-using ArgInfo = AbstractGenerator::ArgInfo;
-
 class FnBinder {
 public:
     FnBinder() = delete;
@@ -398,12 +402,12 @@ private:
     inline /*static*/ TypeAndString get_type_and_string(Type value) {
         std::ostringstream oss;
         oss << value;
-        return {type_of<halide_fake_type_type_t*>(), oss.str()};
+        return {type_of<halide_fake_type_type_t *>(), oss.str()};
     }
 
     template<>
     inline /*static*/ TypeAndString get_type_and_string(std::string value) {
-        return {type_of<halide_fake_string_type_t*>(), value};
+        return {type_of<halide_fake_string_type_t *>(), value};
     }
 
     template<>
@@ -481,23 +485,36 @@ public:
     // Construct an FnBinder from an ordinary function
     template<typename ReturnType, typename... Args>
     FnBinder(ReturnType (*fn)(Args...), const std::vector<InputOrConstant> &inputs, const Output &output) {
-        initialize(fn, fn, inputs, output);
+        initialize(fn, fn, inputs, {output});
+    }
+
+    // Construct an FnBinder from an ordinary function
+    template<typename ReturnType, typename... Args>
+    FnBinder(ReturnType (*fn)(Args...), const std::vector<InputOrConstant> &inputs, const std::vector<Output> &outputs) {
+        initialize(fn, fn, inputs, outputs);
     }
 
     // Construct an FnBinder from a lambda or std::function (possibly with internal state)
     template<typename Fn,  // typename... Inputs,
              typename std::enable_if<is_lambda<Fn>::value>::type * = nullptr>
     FnBinder(Fn &&fn, const std::vector<InputOrConstant> &inputs, const Output &output) {
-        initialize(std::forward<Fn>(fn), (typename function_signature<Fn>::type *)nullptr, inputs, output);
+        initialize(std::forward<Fn>(fn), (typename function_signature<Fn>::type *)nullptr, inputs, {output});
+    }
+
+    // Construct an FnBinder from a lambda or std::function (possibly with internal state)
+    template<typename Fn,  // typename... Inputs,
+             typename std::enable_if<is_lambda<Fn>::value>::type * = nullptr>
+    FnBinder(Fn &&fn, const std::vector<InputOrConstant> &inputs, const std::vector<Output> &outputs) {
+        initialize(std::forward<Fn>(fn), (typename function_signature<Fn>::type *)nullptr, inputs, outputs);
     }
 
     std::vector<Constant> constants() const {
         return constants_;
     }
-    std::vector<ArgInfo> inputs() const {
+    std::vector<AbstractGenerator::ArgInfo> inputs() const {
         return inputs_;
     }
-    std::vector<ArgInfo> outputs() const {
+    std::vector<AbstractGenerator::ArgInfo> outputs() const {
         return outputs_;
     }
 
@@ -507,8 +524,8 @@ public:
 
 protected:
     std::vector<Constant> constants_;
-    std::vector<ArgInfo> inputs_;
-    std::vector<ArgInfo> outputs_;
+    std::vector<AbstractGenerator::ArgInfo> inputs_;
+    std::vector<AbstractGenerator::ArgInfo> outputs_;
     std::shared_ptr<FnInvoker> invoker_;
 
     IOKind to_iokind(SingleArg::Kind k) {
@@ -518,14 +535,15 @@ protected:
         case SingleArg::Kind::Expression:
             return IOKind::Scalar;
         case SingleArg::Kind::Function:
+        case SingleArg::Kind::Pipeline:
             return IOKind::Function;
         case SingleArg::Kind::Buffer:
             return IOKind::Buffer;
         }
     }
 
-    ArgInfo to_arginfo(const SingleArg &a) {
-        return ArgInfo{
+    AbstractGenerator::ArgInfo to_arginfo(const SingleArg &a) {
+        return AbstractGenerator::ArgInfo{
             a.name,
             to_iokind(a.kind),
             a.types,
@@ -554,7 +572,7 @@ protected:
     }
 
     template<typename Fn, typename ReturnType, typename... Args>
-    void initialize(Fn &&fn, ReturnType (*)(Args...), const std::vector<InputOrConstant> &inputs, const Output &output) {
+    void initialize(Fn &&fn, ReturnType (*)(Args...), const std::vector<InputOrConstant> &inputs, const std::vector<Output> &outputs) {
         user_assert(sizeof...(Args) == inputs.size()) << "The number of argument annotations does not match the number of function arguments";
 
         const std::array<SingleArg, sizeof...(Args)> inferred_arg_types = {SingleArgInferrer<typename std::decay<Args>::type>()()...};
@@ -592,19 +610,19 @@ protected:
 
         invoker_ = std::move(captured);
 
-        // TODO: handle Halide::Tuple here
         const SingleArg inferred_ret_type = SingleArgInferrer<typename std::decay<ReturnType>::type>()();
         user_assert(inferred_ret_type.kind != SingleArg::Kind::Constant)
-            << "Outputs must be Func, Expr, or Buffer, but the type seen was " << inferred_ret_type.types << ".";
-        outputs_.push_back(to_arginfo(SingleArg::match(output, inferred_ret_type)));
+            << "Outputs must be Func, Pipeline, Expr, or Buffer, but the type seen was " << inferred_ret_type.types << ".";
+        for (const auto &o : outputs) {
+            outputs_.push_back(to_arginfo(SingleArg::match(o, inferred_ret_type)));
+        }
     }
 };
 
-#if 1
 class G2Generator : public AbstractGenerator {
     const TargetInfo target_info_;
     const std::string name_;
-    const std::vector<ArgInfo> inputs_, outputs_;
+    const std::vector<AbstractGenerator::ArgInfo> inputs_, outputs_;
     std::map<std::string, std::string> generatorparams_;
     std::shared_ptr<FnInvoker> invoker_;
 
@@ -636,11 +654,11 @@ public:
         return target_info_;
     }
 
-    std::vector<ArgInfo> get_input_arginfos() override {
+    std::vector<AbstractGenerator::ArgInfo> get_input_arginfos() override {
         return inputs_;
     }
 
-    std::vector<ArgInfo> get_output_arginfos() override {
+    std::vector<AbstractGenerator::ArgInfo> get_output_arginfos() override {
         return outputs_;
     }
 
@@ -690,14 +708,10 @@ public:
 
         pipeline_ = invoker_->invoke(generatorparams_);
 
-        internal_assert(outputs_.size() == pipeline_.outputs().size());
-        // const int scaling = string_to_int(generatorparams_.at("scaling"));
+        user_assert(outputs_.size() == pipeline_.outputs().size())
+            << "Expected exactly " << outputs_.size() << " output(s) but the function returned a Pipeline containing "
+            << pipeline_.outputs().size() << ".";
 
-        // Var x, y;
-        // output_(x, y) = input_(x, y) * scaling + offset_;
-        // output_.compute_root();
-
-        // pipeline_ = output_;
         user_assert(pipeline_.defined())
             << "build_pipeline() did not build a Pipeline!";
         return pipeline_;
@@ -750,8 +764,6 @@ public:
         return std::make_unique<G2Generator>(context, name_, binder_);
     }
 };
-
-#endif
 
 }  // namespace Internal
 }  // namespace Halide
