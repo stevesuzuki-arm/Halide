@@ -29,7 +29,7 @@ inline std::ostream &operator<<(std::ostream &stream, const std::vector<Type> &v
     stream << "{";
     const char *comma = "";
     for (const Type &t : v) {
-        stream << t << comma;
+        stream << comma << t;
         comma = ",";
     }
     stream << "}";
@@ -72,7 +72,6 @@ struct SingleArg {
         Expression,
         Function,
         Pipeline,
-        Buffer,
     };
 
     std::string name;
@@ -122,7 +121,7 @@ inline std::ostream &operator<<(std::ostream &stream, SingleArg::Kind k) {
         "Constant",
         "Expression",
         "Function",
-        "Buffer",
+        "Pipeline",
     };
     stream << kinds[(int)k];
     return stream;
@@ -137,7 +136,7 @@ inline std::ostream &operator<<(std::ostream &stream, IOKind k) {
     static const char *const kinds[] = {
         "Scalar",
         "Function",
-        "Buffer",
+        "Buffer",  // shouldn't ever see them here
     };
     stream << kinds[(int)k];
     return stream;
@@ -388,8 +387,8 @@ public:
 
 private:
     struct TypeAndString {
-        Type type;
-        std::string str;
+        const Type type;
+        const std::string str;
     };
 
     template<typename T>
@@ -431,7 +430,6 @@ public:
     };
 
     struct Constant : public InputOrConstant {
-        // TODO: add a templated ctor to allow for typed construction?
         template<typename T>
         Constant(const std::string &n, const T &value)
             : InputOrConstant(n, SingleArg::Kind::Constant, 0, get_type_and_string(value)) {
@@ -537,8 +535,6 @@ protected:
         case SingleArg::Kind::Function:
         case SingleArg::Kind::Pipeline:
             return IOKind::Function;
-        case SingleArg::Kind::Buffer:
-            return IOKind::Buffer;
         }
     }
 
@@ -597,7 +593,21 @@ protected:
             } else {
                 inputs_.push_back(to_arginfo(matched));
 
-                internal_assert(matched.types.size() == 1) << "multi-type not handled TODO";
+#if 0
+                const bool is_buffer = inferred_arg_types[i].kind != SingleArg::Kind::Expression;
+                for (const auto &t : matched.types) {
+                    carg.p = Parameter(matched.types[0], is_buffer, matched.dimensions, carg.name);
+                    if (is_buffer) {
+                        carg.f = make_param_func(carg.p, carg.name);
+                    } else {
+                        carg.e = Internal::Variable::make(matched.types[0], carg.name, carg.p);
+                    }
+                }
+#else
+                // TODO: we could probably support Tuple-valued inputs with a little effort --
+                // we'd have to create Tuples to wrap around the individual Variables/ParamFuncs --
+                // but
+                user_assert(matched.types.size() == 1) << "Inputs are not allowed to be Tuple values at this time.";
                 const bool is_buffer = inferred_arg_types[i].kind != SingleArg::Kind::Expression;
                 carg.p = Parameter(matched.types[0], is_buffer, matched.dimensions, carg.name);
                 if (is_buffer) {
@@ -606,13 +616,14 @@ protected:
                     carg.e = Internal::Variable::make(matched.types[0], carg.name, carg.p);
                 }
             }
+#endif
         }
 
         invoker_ = std::move(captured);
 
         const SingleArg inferred_ret_type = SingleArgInferrer<typename std::decay<ReturnType>::type>()();
-        user_assert(inferred_ret_type.kind != SingleArg::Kind::Constant)
-            << "Outputs must be Func, Pipeline, Expr, or Buffer, but the type seen was " << inferred_ret_type.types << ".";
+        user_assert(inferred_ret_type.kind == SingleArg::Kind::Function || inferred_ret_type.kind == SingleArg::Kind::Pipeline)
+            << "Outputs must be Func or Pipeline, but the type seen was " << inferred_ret_type.types << ".";
         for (const auto &o : outputs) {
             outputs_.push_back(to_arginfo(SingleArg::match(o, inferred_ret_type)));
         }
