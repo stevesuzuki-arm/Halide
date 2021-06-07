@@ -1,4 +1,14 @@
 ##
+# Ensure RTTI and exceptions are enabled
+##
+
+if (NOT Halide_ENABLE_RTTI OR NOT Halide_ENABLE_EXCEPTIONS)
+    message(WARNING "Building Python bindings disabled: "
+            "must compile with exceptions [${Halide_ENABLE_EXCEPTIONS}] AND RTTI [${Halide_ENABLE_RTTI}]")
+    return()
+endif ()
+
+##
 # Load Python dependencies, including external pybind11
 ##
 
