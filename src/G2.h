@@ -70,6 +70,7 @@ struct SingleArg {
         Unknown,
         Constant,
         Expression,
+        Tuple,
         Function,
         Pipeline,
     };
@@ -120,6 +121,7 @@ inline std::ostream &operator<<(std::ostream &stream, SingleArg::Kind k) {
         "Unknown",
         "Constant",
         "Expression",
+        "Tuple",
         "Function",
         "Pipeline",
     };
@@ -239,6 +241,11 @@ inline SingleArg SingleArgInferrer<Halide::Expr>::operator()() {
     return SingleArg{"", SingleArg::Kind::Expression, {}, 0};
 }
 
+template<>
+inline SingleArg SingleArgInferrer<Halide::Tuple>::operator()() {
+    return SingleArg{"", SingleArg::Kind::Tuple, {}, 0};
+}
+
 // ---------------------------------------
 
 struct FnInvoker {
@@ -260,9 +267,10 @@ struct FnInvoker {
 
 struct CapturedArg {
     std::string name;
-    Parameter p;
+    std::vector<Parameter> params;  // Can have > 1 for Tuple-valued inputs
     Func f;
     Expr e;
+    Tuple t{Expr()};  // Tuple has no default ctor
     std::string str;
 
     using StrMap = std::map<std::string, std::string>;
@@ -283,6 +291,11 @@ struct CapturedArg {
 template<>
 inline Expr CapturedArg::value<Expr>(const StrMap &m) const {
     return e;
+}
+
+template<>
+inline Tuple CapturedArg::value<Tuple>(const StrMap &m) const {
+    return t;
 }
 
 template<>
@@ -352,7 +365,7 @@ struct CapturedFn : public FnInvoker {
     std::vector<Parameter> get_parameters_for_input(const std::string &name) override {
         for (const auto &a : args) {
             if (a.name == name) {
-                return {a.p};
+                return a.params;
             }
         }
         user_assert(false) << "Unknown input: " << name;
@@ -363,7 +376,7 @@ private:
     template<size_t... Is>
     Pipeline invoke_impl(const std::map<std::string, std::string> &constants, std::index_sequence<Is...>) {
         using T = std::tuple<Args...>;
-        return fn(std::get<Is>(args).template value<typename std::decay<decltype(std::get<Is>(T()))>::type>(constants)...);
+        return fn(std::get<Is>(args).template value<typename std::decay<decltype(std::get<Is>(std::declval<T>()))>::type>(constants)...);
     }
 
     // Not movable, not copyable
@@ -531,6 +544,7 @@ protected:
         default:
             internal_error << "Unhandled SingleArg::Kind: " << k;
         case SingleArg::Kind::Expression:
+        case SingleArg::Kind::Tuple:
             return IOKind::Scalar;
         case SingleArg::Kind::Function:
         case SingleArg::Kind::Pipeline:
@@ -585,7 +599,10 @@ protected:
 
             CapturedArg &carg = captured->args[i];
             carg.name = matched.name;
-            if (inferred_arg_types[i].kind == SingleArg::Kind::Constant) {
+            const auto k = inferred_arg_types[i].kind;
+            user_assert(k != SingleArg::Kind::Pipeline)
+                << "Pipeline is only allowed for Outputs, not Inputs";
+            if (k == SingleArg::Kind::Constant) {
                 constants_.emplace_back(matched.name, matched.default_value);
                 constants_.back().types = matched.types;
 
@@ -593,30 +610,45 @@ protected:
             } else {
                 inputs_.push_back(to_arginfo(matched));
 
-#if 0
-                const bool is_buffer = inferred_arg_types[i].kind != SingleArg::Kind::Expression;
-                for (const auto &t : matched.types) {
-                    carg.p = Parameter(matched.types[0], is_buffer, matched.dimensions, carg.name);
+                const bool is_buffer = (k == SingleArg::Kind::Function);
+                std::vector<Func> funcs;
+                std::vector<Expr> exprs;
+                for (size_t idx = 0; idx < matched.types.size(); idx++) {
+                    std::string param_name = carg.name;
+                    if (matched.types.size() > 1)
+                        param_name += "_" + std::to_string(idx);
+                    const Type t = matched.types[idx];
+                    carg.params.emplace_back(t, is_buffer, matched.dimensions, param_name);
+                    Parameter &p = carg.params.back();
                     if (is_buffer) {
-                        carg.f = make_param_func(carg.p, carg.name);
+                        funcs.push_back(make_param_func(p, param_name));
                     } else {
-                        carg.e = Internal::Variable::make(matched.types[0], carg.name, carg.p);
+                        exprs.push_back(Internal::Variable::make(t, param_name, p));
                     }
                 }
-#else
-                // TODO: we could probably support Tuple-valued inputs with a little effort --
-                // we'd have to create Tuples to wrap around the individual Variables/ParamFuncs --
-                // but
-                user_assert(matched.types.size() == 1) << "Inputs are not allowed to be Tuple values at this time.";
-                const bool is_buffer = inferred_arg_types[i].kind != SingleArg::Kind::Expression;
-                carg.p = Parameter(matched.types[0], is_buffer, matched.dimensions, carg.name);
-                if (is_buffer) {
-                    carg.f = make_param_func(carg.p, carg.name);
-                } else {
-                    carg.e = Internal::Variable::make(matched.types[0], carg.name, carg.p);
+                if (funcs.size() > 1) {
+                    std::vector<Expr> wrap;
+                    for (const auto &f : funcs) {
+                        wrap.push_back(f(Halide::_));
+                    }
+                    carg.f = Func(carg.name);
+                    carg.f(Halide::_) = Tuple(wrap);
+                } else if (funcs.size() == 1) {
+                    carg.f = funcs[0];
+                }
+
+                if (exprs.size() > 1) {
+                    internal_assert(k == SingleArg::Kind::Tuple);
+                    carg.t = Tuple(exprs);
+                } else if (exprs.size() == 1) {
+                    if (k == SingleArg::Kind::Tuple) {
+                        // Tuple of size 1
+                        carg.t = Tuple(exprs);
+                    } else {
+                        carg.e = exprs[0];
+                    }
                 }
             }
-#endif
         }
 
         invoker_ = std::move(captured);

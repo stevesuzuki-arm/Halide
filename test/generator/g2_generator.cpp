@@ -30,12 +30,20 @@ const auto g2_lambda_impl = [](Func input, Expr offset, int scaling,
     return output;
 };
 
-Func g2_tuple_func_impl(Func input, Expr offset, int scaling) {
+Func g2_tuple_func_impl(Func input, Tuple offset, int scaling) {
+    assert(input.values().size() == 2);
+    assert(input.values()[0].type() == Int(32));
+    assert(input.values()[1].type() == Float(64));
+
+    assert(offset.size() == 2);
+    assert(offset[0].type() == Int(32));
+    assert(offset[1].type() == Float(64));
+
     Expr fscaling = Expr(0.5) * scaling;
 
     Func output;
-    output(x, y) = Tuple(input(x, y) * scaling + offset,
-                         cast<double>(input(x, y)) * fscaling + offset);
+    output(x, y) = Tuple(input(x, y)[0] * scaling + offset[0],
+                         input(x, y)[1] * fscaling + offset[1]);
     output.compute_root();
 
     return output;
@@ -128,8 +136,8 @@ RegisterGenerator register_3(
         FnBinder d{
             Halide::Testing::g2_tuple_func_impl,
             {
-                FnBinder::Input("input", Int(32), 2),
-                FnBinder::Input("offset", Int(32)),
+                FnBinder::Input("input", {Int(32), Float(64)}, 2),
+                FnBinder::Input("offset", {Int(32), Float(64)}),
                 FnBinder::Constant("scaling", 2),
             },
             FnBinder::Output("output", {Int(32), Float(64)}, 2),
