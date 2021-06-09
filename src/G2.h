@@ -80,9 +80,10 @@ struct SingleArg {
     std::vector<Type> types;
     int dimensions = -1;
     std::string default_value;  // only when kind == Constant
+    bool is_output = false;
 
-    explicit SingleArg(const std::string &n, Kind k, const std::vector<Type> &t, int d, const std::string &s = "")
-        : name(n), kind(k), types(t), dimensions(d), default_value(s) {
+    explicit SingleArg(const std::string &n, Kind k, const std::vector<Type> &t, int d, const std::string &s = "", bool o = false)
+        : name(n), kind(k), types(t), dimensions(d), default_value(s), is_output(o) {
     }
 
     // Combine the inferred type info with the explicitly-annotated type info
@@ -100,7 +101,9 @@ struct SingleArg {
             get_matching_value(annotated.dimensions, inferred.dimensions, annotated.name, "dimensions"),
             skip_default_value ?
                 require_both_empty(annotated.default_value, inferred.default_value) :
-                get_matching_value(annotated.default_value, inferred.default_value, annotated.name, "default_value")};
+                get_matching_value(annotated.default_value, inferred.default_value, annotated.name, "default_value"),
+            get_matching_value(annotated.is_output, inferred.is_output, annotated.name, "is_output"),
+        };
     }
 
 private:
@@ -201,6 +204,11 @@ inline bool SingleArg::is_specified(const std::vector<Type> &t) {
 template<>
 inline bool SingleArg::is_specified(const int &d) {
     return d >= 0;
+}
+
+template<>
+inline bool SingleArg::is_specified(const bool &d) {
+    return true;
 }
 
 template<typename T>
@@ -433,36 +441,25 @@ private:
     }
 
 public:
-    struct InputOrConstant : public SingleArg {
-        InputOrConstant(const std::string &n, SingleArg::Kind k, const std::vector<Type> &t, int d, const std::string &s = "")
-            : SingleArg(n, k, t, d, s) {
-        }
-        InputOrConstant(const std::string &n, SingleArg::Kind k, int d, const TypeAndString &t_and_s)
-            : SingleArg(n, k, {t_and_s.type}, d, t_and_s.str) {
-        }
-    };
-
-    struct Constant : public InputOrConstant {
+    struct Constant : public SingleArg {
         template<typename T>
         Constant(const std::string &n, const T &value)
-            : InputOrConstant(n, SingleArg::Kind::Constant, 0, get_type_and_string(value)) {
+            : Constant(n, get_type_and_string(value)) {
+        }
+
+    private:
+        Constant(const std::string &n, const TypeAndString &t_and_s)
+            : SingleArg(n, SingleArg::Kind::Constant, {t_and_s.type}, 0, t_and_s.str) {
         }
     };
 
-    struct Input : public InputOrConstant {
+    struct Input : public SingleArg {
         explicit Input(const std::string &n, const std::vector<Type> &t, int d)
-            : InputOrConstant(n, SingleArg::Kind::Unknown, t, d) {
+            : SingleArg(n, SingleArg::Kind::Unknown, t, d) {
         }
-
-        // explicit Input(const std::string &n)
-        //     : Input(n, std::vector<Type>{}, -1) {
-        // }
         explicit Input(const std::string &n, const std::vector<Type> &t)
             : Input(n, t, -1) {
         }
-        // explicit Input(const std::string &n, int d)
-        //     : Input(n, std::vector<Type>{}, d) {
-        // }
         explicit Input(const std::string &n, const Type &t)
             : Input(n, std::vector<Type>{t}, -1) {
         }
@@ -473,18 +470,12 @@ public:
 
     struct Output : public SingleArg {
         explicit Output(const std::string &n, const std::vector<Type> &t, int d)
-            : SingleArg(n, SingleArg::Kind::Unknown, t, d) {
+            : SingleArg(n, SingleArg::Kind::Unknown, t, d, "", true) {
         }
 
-        // explicit Output(const std::string &n)
-        //     : Output(n, std::vector<Type>{}, -1) {
-        // }
         explicit Output(const std::string &n, const std::vector<Type> &t)
             : Output(n, t, -1) {
         }
-        // explicit Output(const std::string &n, int d)
-        //     : Output(n, std::vector<Type>{}, d) {
-        // }
         explicit Output(const std::string &n, const Type &t)
             : Output(n, std::vector<Type>{t}, -1) {
         }
@@ -495,28 +486,15 @@ public:
 
     // Construct an FnBinder from an ordinary function
     template<typename ReturnType, typename... Args>
-    FnBinder(ReturnType (*fn)(Args...), const std::vector<InputOrConstant> &inputs, const Output &output) {
-        initialize(fn, fn, inputs, {output});
-    }
-
-    // Construct an FnBinder from an ordinary function
-    template<typename ReturnType, typename... Args>
-    FnBinder(ReturnType (*fn)(Args...), const std::vector<InputOrConstant> &inputs, const std::vector<Output> &outputs) {
-        initialize(fn, fn, inputs, outputs);
+    FnBinder(ReturnType (*fn)(Args...), const std::vector<SingleArg> &inputs_and_outputs) {
+        initialize(fn, fn, inputs_and_outputs);
     }
 
     // Construct an FnBinder from a lambda or std::function (possibly with internal state)
     template<typename Fn,  // typename... Inputs,
              typename std::enable_if<is_lambda<Fn>::value>::type * = nullptr>
-    FnBinder(Fn &&fn, const std::vector<InputOrConstant> &inputs, const Output &output) {
-        initialize(std::forward<Fn>(fn), (typename function_signature<Fn>::type *)nullptr, inputs, {output});
-    }
-
-    // Construct an FnBinder from a lambda or std::function (possibly with internal state)
-    template<typename Fn,  // typename... Inputs,
-             typename std::enable_if<is_lambda<Fn>::value>::type * = nullptr>
-    FnBinder(Fn &&fn, const std::vector<InputOrConstant> &inputs, const std::vector<Output> &outputs) {
-        initialize(std::forward<Fn>(fn), (typename function_signature<Fn>::type *)nullptr, inputs, outputs);
+    FnBinder(Fn &&fn, const std::vector<SingleArg> &inputs_and_outputs) {
+        initialize(std::forward<Fn>(fn), (typename function_signature<Fn>::type *)nullptr, inputs_and_outputs);
     }
 
     std::vector<Constant> constants() const {
@@ -582,24 +560,33 @@ protected:
     }
 
     template<typename Fn, typename ReturnType, typename... Args>
-    void initialize(Fn &&fn, ReturnType (*)(Args...), const std::vector<InputOrConstant> &inputs, const std::vector<Output> &outputs) {
-        user_assert(sizeof...(Args) == inputs.size()) << "The number of argument annotations does not match the number of function arguments";
-
-        const std::array<SingleArg, sizeof...(Args)> inferred_arg_types = {SingleArgInferrer<typename std::decay<Args>::type>()()...};
-        internal_assert(inferred_arg_types.size() == inputs.size());
+    void initialize(Fn &&fn, ReturnType (*)(Args...), const std::vector<SingleArg> &inputs_and_outputs) {
+        const std::array<SingleArg, sizeof...(Args)> inferred_input_arg_types = {SingleArgInferrer<typename std::decay<Args>::type>()()...};
+        // There must be at least one output
+        internal_assert(inferred_input_arg_types.size() < inputs_and_outputs.size());
 
         using CapFn = CapturedFn<ReturnType, Args...>;
         auto captured = std::make_unique<CapFn>();
         captured->fn = std::move(fn);
 
-        for (size_t i = 0; i < inputs.size(); ++i) {
-            const bool is_constant = (inferred_arg_types[i].kind == SingleArg::Kind::Constant);
+        internal_assert(inputs_and_outputs.size() > 0);
+        size_t first_output = inputs_and_outputs.size() - 1;
+        user_assert(inputs_and_outputs[first_output].is_output)
+            << "Expected an Output as the final argument, but saw " << inputs_and_outputs[first_output].kind << " '" << inputs_and_outputs[first_output].name << "'.";
+        while (first_output > 0 && inputs_and_outputs[first_output - 1].is_output) {
+            first_output--;
+        }
+
+        user_assert(sizeof...(Args) == first_output) << "The number of Input and Constant annotations does not match the number of function arguments";
+        for (size_t i = 0; i < first_output; ++i) {
+            user_assert(!inputs_and_outputs[i].is_output) << "Outputs must be listed after all Inputs and Constants, but saw '" << inputs_and_outputs[i].name << "'' out of place.";
+            const bool is_constant = (inferred_input_arg_types[i].kind == SingleArg::Kind::Constant);
             const bool skip_default_value = !is_constant;
-            const SingleArg matched = SingleArg::match(inputs[i], inferred_arg_types[i], skip_default_value);
+            const SingleArg matched = SingleArg::match(inputs_and_outputs[i], inferred_input_arg_types[i], skip_default_value);
 
             CapturedArg &carg = captured->args[i];
             carg.name = matched.name;
-            const auto k = inferred_arg_types[i].kind;
+            const auto k = inferred_input_arg_types[i].kind;
             user_assert(k != SingleArg::Kind::Pipeline)
                 << "Pipeline is only allowed for Outputs, not Inputs";
             if (k == SingleArg::Kind::Constant) {
@@ -653,11 +640,13 @@ protected:
 
         invoker_ = std::move(captured);
 
-        const SingleArg inferred_ret_type = SingleArgInferrer<typename std::decay<ReturnType>::type>()();
+        SingleArg inferred_ret_type = SingleArgInferrer<typename std::decay<ReturnType>::type>()();
+        inferred_ret_type.is_output = true;
         user_assert(inferred_ret_type.kind == SingleArg::Kind::Function || inferred_ret_type.kind == SingleArg::Kind::Pipeline)
             << "Outputs must be Func or Pipeline, but the type seen was " << inferred_ret_type.types << ".";
-        for (const auto &o : outputs) {
-            outputs_.push_back(to_arginfo(SingleArg::match(o, inferred_ret_type)));
+        for (size_t i = first_output; i < inputs_and_outputs.size(); ++i) {
+            user_assert(inputs_and_outputs[i].is_output) << "All Inputs and Constants must come before any Outputs.";
+            outputs_.push_back(to_arginfo(SingleArg::match(inputs_and_outputs[i], inferred_ret_type)));
         }
     }
 };
@@ -810,3 +799,25 @@ public:
 
 }  // namespace Internal
 }  // namespace Halide
+
+#define HALIDE_REGISTER_G2(GEN_FUNC, GEN_REGISTRY_NAME, ...)                                                                        \
+    namespace halide_register_generator {                                                                                           \
+    struct halide_global_ns;                                                                                                        \
+    namespace GEN_REGISTRY_NAME##_ns {                                                                                              \
+        std::unique_ptr<Halide::Internal::AbstractGenerator> factory(const Halide::GeneratorContext &context) {                     \
+            using Input [[maybe_unused]] = Halide::Internal::FnBinder::Input;                                                       \
+            using Output [[maybe_unused]] = Halide::Internal::FnBinder::Output;                                                     \
+            using Constant [[maybe_unused]] = Halide::Internal::FnBinder::Constant;                                                 \
+            using Halide::Bool;                                                                                                     \
+            using Halide::Float;                                                                                                    \
+            using Halide::Int;                                                                                                      \
+            using Halide::UInt;                                                                                                     \
+            using Halide::Handle;                                                                                                   \
+            Halide::Internal::FnBinder d(GEN_FUNC, {__VA_ARGS__});                                                                  \
+            return Halide::Internal::G2GeneratorFactory(#GEN_REGISTRY_NAME, std::move(d))(context);                                 \
+        }                                                                                                                           \
+    }                                                                                                                               \
+    static auto reg_##GEN_REGISTRY_NAME = Halide::Internal::RegisterGenerator(#GEN_REGISTRY_NAME, GEN_REGISTRY_NAME##_ns::factory); \
+    }                                                                                                                               \
+    static_assert(std::is_same<::halide_register_generator::halide_global_ns, halide_register_generator::halide_global_ns>::value,  \
+                  "HALIDE_REGISTER_G2 must be used at global scope");
