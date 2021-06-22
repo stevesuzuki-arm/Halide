@@ -160,9 +160,11 @@ size_t Tensor::storage_size() const {
     return storage_->buffer.size_in_bytes();
 }
 
-void Tensor::resize(const Box &new_shape) {
-    assert(is_dynamic());
+void Tensor::resize_dynamic(const Box &new_shape) {
+    assert(!is_allocated());
     assert(!is_external());
+    // No: we might need to resize a dynamic Tensor more than once.
+    // assert(!is_allocated());
 
     TensorDimensions new_dims;
 
