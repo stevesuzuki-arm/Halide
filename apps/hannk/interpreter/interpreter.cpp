@@ -20,15 +20,22 @@ Interpreter::~Interpreter() {
 namespace {
 
 struct TensorStorageInfo {
-    std::set<Tensor*> tensors;
+    std::set<Tensor *> tensors;
     size_t size_needed = 0;
     int first_use = std::numeric_limits<int>::max();
     int last_use = std::numeric_limits<int>::min();
 };
 
+bool needs_allocation(const TensorPtr &t) {
+    if (!t || t->is_external() || t->is_constant() || t->is_dynamic()) {
+        return false;
+    }
+    return true;
+}
+
 class FindAllocatableTensors : public OpVisitor {
     void process(TensorPtr t) {
-        if (!t || t->is_external() || t->is_constant() || t->is_dynamic()) {
+        if (!needs_allocation(t)) {
             return;
         }
         assert(!t->is_allocated());
@@ -61,19 +68,38 @@ public:
     int op_index = -1;
 };
 
+class TensorVisitor : public OpVisitor {
+    virtual void visit(const TensorPtr &t) = 0;
 
-class AllocateAll : public OpVisitor {
     void visit(OpGroup *g) {
         for (int i = 0; i < g->op_count(); i++) {
             Op *op = g->op(i);
             for (int j = 0; j < op->input_count(); j++) {
-                op->input(j)->allocate();
+                visit(op->input(j));
             }
             for (int j = 0; j < op->output_count(); j++) {
-                op->output(j)->allocate();
+                visit(op->output(j));
             }
             op->accept(this);
         }
+    }
+};
+
+class AllocateAll : public TensorVisitor {
+    void visit(const TensorPtr &t) override {
+        if (!needs_allocation(t)) {
+            return;
+        }
+        t->allocate();
+    }
+};
+
+class VerifyAllAllocated : public TensorVisitor {
+    void visit(const TensorPtr &t) override {
+        if (!needs_allocation(t)) {
+            return;
+        }
+        assert(t->is_allocated());
     }
 };
 
@@ -102,6 +128,11 @@ void Interpreter::init(InterpreterOptions options) {
     // better lifetime management for these allocations.
     AllocateAll allocate_all;
     model_->accept(&allocate_all);
+
+#ifndef NDEBUG
+    VerifyAllAllocated verify_all;
+    model_->accept(&verify_all);
+#endif
 }
 
 void Interpreter::execute() {
