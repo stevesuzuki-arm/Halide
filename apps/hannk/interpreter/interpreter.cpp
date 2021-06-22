@@ -5,6 +5,7 @@
 #include <cmath>
 #include <list>
 #include <map>
+#include <set>
 
 namespace hannk {
 
@@ -18,15 +19,11 @@ Interpreter::~Interpreter() {
 
 namespace {
 
-struct TensorInfo {
-    size_t offset = 0;
-    size_t size = 0;
+struct TensorStorageInfo {
+    std::set<Tensor*> tensors;
+    size_t size_needed = 0;
     int first_use = std::numeric_limits<int>::max();
     int last_use = std::numeric_limits<int>::min();
-
-    // bool operator<(const TensorInfo &other) const {
-    //     return offset < other.offset;
-    // }
 };
 
 class FindAllocatableTensors : public OpVisitor {
@@ -35,9 +32,13 @@ class FindAllocatableTensors : public OpVisitor {
             return;
         }
         HCHECK(!t->is_allocated());
-        auto &info = tensors[t.get()];
-        HCHECK(info.size == 0 || info.size == t->buffer().size_in_bytes());
-        info.size = t->buffer().size_in_bytes();
+        TensorStorage *storage = t->storage().get();
+        assert(storage != nullptr);
+        auto &info = tensor_info[storage];
+        info.tensors.insert(t.get());
+        const size_t storage_size = t->storage_size();
+        HCHECK(info.size_needed == 0 || info.size_needed == storage_size);
+        info.size_needed = storage_size;
         info.first_use = std::min(info.first_use, op_index);
         info.last_use = std::max(info.last_use, op_index);
     }
@@ -57,7 +58,7 @@ class FindAllocatableTensors : public OpVisitor {
     }
 
 public:
-    std::map<Tensor *, TensorInfo> tensors;
+    std::map<TensorStorage *, TensorStorageInfo> tensor_info;
     int op_index = -1;
 };
 
@@ -88,11 +89,14 @@ void Interpreter::init(InterpreterOptions options) {
     FindAllocatableTensors find_tensors;
     model_->accept(&find_tensors);
     std::cout << "Final op_count is " << find_tensors.op_index + 1 << "\n";
-    std::cout << "Final allocatable tensor count is " << find_tensors.tensors.size() << "\n";
-    for (const auto &it : find_tensors.tensors) {
+    std::cout << "Final allocatable tensor-storage count is " << find_tensors.tensor_info.size() << "\n";
+    for (const auto &it : find_tensors.tensor_info) {
         const auto t = it.first;
         const auto info = it.second;
-        std::cout << "Tensor " << t->name() << " size " << info.size << " life [" << info.first_use << " ... " << info.last_use << "]\n";
+        std::cout << "TensorStorage of size " << info.size_needed << " life [" << info.first_use << " ... " << info.last_use << "]\n";
+        for (const auto *t : info.tensors) {
+            std::cout << "  Tensor: " << t->name() << " size " << t->buffer().size_in_bytes() << "\n";
+        }
     }
 
     // TODO: Find a better schedule for executing the ops, including
