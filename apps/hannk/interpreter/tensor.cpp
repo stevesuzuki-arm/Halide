@@ -19,19 +19,13 @@ HalideBuffer<void> make_unallocated_buffer(halide_type_t type, const Box &bounds
 
 }  // namespace
 
-struct TensorStorage final {
-    HalideBuffer<void> buffer;
+TensorStorage::TensorStorage(halide_type_t type, int rank, const halide_dimension_t *dimensions)
+    : buffer(type, nullptr, rank, dimensions) {
+}
 
-    TensorStorage(halide_type_t type, int rank, const halide_dimension_t *dimensions)
-        : buffer(type, nullptr, rank, dimensions) {
-    }
-
-    TensorStorage() = delete;
-    TensorStorage(const TensorStorage &) = delete;
-    TensorStorage &operator=(const TensorStorage &) = delete;
-    TensorStorage(TensorStorage &&) = delete;
-    TensorStorage &operator=(TensorStorage &&) = delete;
-};
+size_t TensorStorage::storage_size() const {
+    return buffer.size_in_bytes();
+}
 
 Tensor::Tensor(std::string name, HalideBuffer<void> buffer, QuantizationInfo quantization)
     : name_(std::move(name)),
@@ -155,13 +149,8 @@ void Tensor::allocate() {
     buffer_ = std::move(allocated_buffer);
 }
 
-size_t Tensor::storage_size() const {
-    assert(storage_ != nullptr);
-    return storage_->buffer.size_in_bytes();
-}
-
 void Tensor::resize_dynamic(const Box &new_shape) {
-    assert(!is_allocated());
+    assert(is_dynamic());
     assert(!is_external());
     // No: we might need to resize a dynamic Tensor more than once.
     // assert(!is_allocated());

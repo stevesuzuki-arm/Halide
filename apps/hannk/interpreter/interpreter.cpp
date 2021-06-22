@@ -31,14 +31,13 @@ class FindAllocatableTensors : public OpVisitor {
         if (!t || t->is_external() || t->is_constant() || t->is_dynamic()) {
             return;
         }
-        HCHECK(!t->is_allocated());
+        assert(!t->is_allocated());
         TensorStorage *storage = t->storage().get();
         assert(storage != nullptr);
         auto &info = tensor_info[storage];
+        assert(info.size_needed == 0 || info.size_needed == storage->storage_size());
         info.tensors.insert(t.get());
-        const size_t storage_size = t->storage_size();
-        HCHECK(info.size_needed == 0 || info.size_needed == storage_size);
-        info.size_needed = storage_size;
+        info.size_needed = storage->storage_size();
         info.first_use = std::min(info.first_use, op_index);
         info.last_use = std::max(info.last_use, op_index);
     }

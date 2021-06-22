@@ -43,7 +43,23 @@ using TensorPtr = std::shared_ptr<Tensor>;
 using TensorOffset = SmallVector<int, max_rank>;
 using TensorDimensions = SmallVector<halide_dimension_t, max_rank>;
 
-struct TensorStorage;
+class TensorStorage {
+    friend class Tensor;
+
+    HalideBuffer<void> buffer;
+
+    TensorStorage() = delete;
+    TensorStorage(const TensorStorage &) = delete;
+    TensorStorage &operator=(const TensorStorage &) = delete;
+    TensorStorage(TensorStorage &&) = delete;
+    TensorStorage &operator=(TensorStorage &&) = delete;
+
+public:
+    // std::make_shared doesn't care about friendship, so just make this public.
+    TensorStorage(halide_type_t type, int rank, const halide_dimension_t *dimensions);
+
+    size_t storage_size() const;
+};
 
 class Tensor {
     std::string name_;
@@ -89,8 +105,6 @@ public:
     // It's public, but since TensorStorage is a blind struct, this can only
     // be used externally to group Tensors that share the same storage.
     std::shared_ptr<TensorStorage> storage();
-
-    size_t storage_size() const;
 
     halide_type_t type() const {
         return buffer_.type();
